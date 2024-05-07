@@ -100,17 +100,21 @@ function log_warning() {
 
 # Determine Raspbian version
 version_msg="Unknown Raspbian Version"
-if [ "$rasp_version" -eq "11" ]; then
+if [ "$rasp_version" -eq "12" ]; then
+	version_msg="Debian GNU/Linux 12.0 (Bookworm)"
+	php_version="8.2"
+	php_package="php${php_version} php${php_version}-cgi php${php_version}-common php${php_version}-cli php${php_version}-fpm php${php_version}-mbstring php${php_version}-mysql php${php_version}-opcache php${php_version}-curl php${php_version}-gd php${php_version}-curl php${php_version}-zip php${php_version}-xml php-redis php${php_version}-dev"
+elif [ "$rasp_version" -eq "11" ]; then
 	version_msg="Raspbian 11.0 (Bullseye)"
-	php_version="7.3"
+	php_version="7.4"
 	php_package="php${php_version} php${php_version}-cgi php${php_version}-common php${php_version}-cli php${php_version}-fpm php${php_version}-mbstring php${php_version}-mysql php${php_version}-opcache php${php_version}-curl php${php_version}-gd php${php_version}-curl php${php_version}-zip php${php_version}-xml php-redis php${php_version}-dev"
 elif [ "$rasp_version" -eq "10" ]; then
 	version_msg="Raspbian 10.0 (Buster)"
-	php_version="7.3"
+	php_version="7.4"
 	php_package="php${php_version} php${php_version}-cgi php${php_version}-common php${php_version}-cli php${php_version}-fpm php${php_version}-mbstring php${php_version}-mysql php${php_version}-opcache php${php_version}-curl php${php_version}-gd php${php_version}-curl php${php_version}-zip php${php_version}-xml php-redis php${php_version}-dev"
 elif [ "$rasp_version" -eq "9" ]; then
 	version_msg="Raspbian 9.0 (Stretch)"
-	php_version="7.3"
+	php_version="7.4"
 	php_package="php${php_version} php${php_version}-cgi php${php_version}-common php${php_version}-cli php${php_version}-fpm php${php_version}-mbstring php${php_version}-mysql php${php_version}-opcache php${php_version}-curl php${php_version}-gd php${php_version}-curl php${php_version}-zip php${php_version}-xml php-redis php${php_version}-dev"
 elif [ "$rasp_version" -lt "9" ]; then
 	echo "Raspbian ${rasp_version} is unsupported. Please upgrade."
@@ -225,7 +229,17 @@ function installDependencies()
 		echo "Main Depepencies Successfully Installed"
 	fi
 	sudo apt-get install ffmpeg -y --fix-missing || log_error "Unable to install ffmpeg"
-	sudo pip3 install RPi.GPIO || log_error "Unable to install pip3 packages"
+
+	# Check if OS version 12 and create Python virtual environment
+	if [ "$rasp_version" -eq "12" ]; then
+		version_msg="Debian GNU/Linux 12.0 (Bookworm)"
+		sudo apt-get install python3-venv
+		sudo python3 -m venv venv
+		sudo venv/bin/pip3 install RPi.GPIO
+		sudo rm -rf venv
+	else
+		sudo pip3 install RPi.GPIO || log_error "Unable to install pip3 packages"
+	fi
 	if [ -f "/usr/local/bin/composer" ]; then
 		log_info "Composer already installed!"
 	else
@@ -353,8 +367,23 @@ function downloadInstallerFiles()
 	fi
 
 	log_info "Cloning latest installer files from github"
+	
+	# Check to see if temp install directory already exist and remove accordingly
+	#if [ -f /tmp/mudpi_installer ]; then
+		#log_info "Temp install directory already exists!"
+	sudo rm -rf /tmp/mudpi_installer
+	sudo rm -rf /tmp/mudpi_core
+	#fi
 	git clone --depth 1 https://github.com/${repo_installer} /tmp/mudpi_installer || log_error "Unable to download installer files from github"
+	
+	# Check to see if Home install directory already exist and remove accordingly
+	#if [ -d $mudpi_dir/installer ]; then
+		#log_info "MudPi Home install directory already exists!"
+		sudo rm -rf $mudpi_dir/installer
+		sudo rm -rf $mudpi_dir/core/mudpi_core
+	#fi
 	sudo mv /tmp/mudpi_installer $mudpi_dir/installer || log_error "Unable to move Mudpi installer to $mudpi_dir/installer"
+	
 	sudo chown -R $mudpi_user:$mudpi_user "$mudpi_dir" || log_error "Unable to set permissions in '$mudpi_dir/installer'"
 }
 
@@ -374,9 +403,20 @@ function downloadMudpiCoreFiles()
 	sudo mv /tmp/mudpi_core $mudpi_dir/core || log_error "Unable to move Mudpi core to $mudpi_dir"
 	sudo chown -R $mudpi_user:$mudpi_user "$mudpi_dir" || log_error "Unable to set permissions in '$mudpi_dir'"
 	sudo chmod g+w $mudpi_dir/core || log_error "Unable to set write permissions in $mudpi_dir"
-	sudo pip3 install -r $mudpi_dir/core/requirements.txt
-	sudo pip3 install $mudpi_dir/core >/dev/null 2>&1 || log_error "Problem installing MudPi core python package"
-}
+
+	# Check if OS version 12 and create then delete Python virtual environment
+	if [ "$rasp_version" -eq "12" ]; then
+		version_msg="Debian GNU/Linux 12.0 (Bookworm)"
+		sudo apt-get install python3-venv
+		sudo python3 -m venv venv
+		sudo venv/bin/pip3 install -r $mudpi_dir/core/requirements.txt
+		sudo venv/bin/pip3 install $mudpi_dir/core >/dev/null 2>&1 || log_error "Problem installing MudPi core python package"
+		sudo rm -rf venv
+	else
+		sudo pip3 install -r $mudpi_dir/core/requirements.txt
+		sudo pip3 install $mudpi_dir/core >/dev/null 2>&1 || log_error "Problem installing MudPi core python package"
+	fi
+}	
 
 # Fetches latest files from github
 function downloadAssistantFiles() 
@@ -392,7 +432,7 @@ function downloadAssistantFiles()
 	log_info "Cloning latest assistant files from github"
 	git clone --depth 1 https://github.com/${repo_assistant} /tmp/mudpi_assistant || log_error "Unable to download assistant files from github"
 	sudo mv /tmp/mudpi_assistant $webroot_dir || log_error "Unable to move Mudpi to web root"
-	composer update -d${webroot_dir}/mudpi_assistant || log_error "Unable to run composer install"
+	composer update --no-scripts -d${webroot_dir}/mudpi_assistant || log_error "Unable to run composer install"
 	sudo chown -R $mudpi_user:$mudpi_user "${webroot_dir}/mudpi_assistant" || log_error "Unable to set permissions in '$webroot_dir'"
 	sudo find ${webroot_dir}/mudpi_assistant -type d -exec chmod 1755 {} + || log_error "Unable to set permissions in '$webroot_dir'"
 	sudo find ${webroot_dir}/mudpi_assistant -type f -exec chmod 1644 {} + || log_error "Unable to set permissions in '$webroot_dir'"
@@ -492,10 +532,14 @@ function installDefaultConfigs() {
 	if [ "$ui_option" == 1 ]; then
 		sudo rm /etc/nginx/sites-enabled/default
 		sudo rm /etc/nginx/sites-available/default
-
+		cp $webroot_dir/mudpi/configs/mudpi_ui.conf $webroot_dir/mudpi/configs/mudpi_ui.conf.bak
+		if [ "$rasp_version" -eq "12" ]; then
+			sudo sed -i 's/7.3/8.2/' $webroot_dir/mudpi/configs/mudpi_ui.conf #Kludge to fix incorrect hard-coded PHP-FPM version in mudpi.ui.conf
+		else
+			sudo sed -i 's/7.3/7.4/' $webroot_dir/mudpi/configs/mudpi_ui.conf #Kludge to fix incorrect hard-coded PHP-FPM version in mudpi.ui.conf
+		fi
 		sudo cp $webroot_dir/mudpi/configs/mudpi_ui.conf /etc/nginx/sites-available/mudpi_ui.conf || log_error "Unable to install ui nginx config"
 		sudo ln -sf /etc/nginx/sites-available/mudpi_ui.conf /etc/nginx/sites-enabled
-
 		if [ -f /etc/nginx/sites-available/assistant_redirect.conf ]; then
 			log_info "Detected assistant redirect config. Removing assistant_redirect.conf"
 			sudo rm /etc/nginx/sites-enabled/assistant_redirect.conf
